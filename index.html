@@ -2182,7 +2182,9 @@ function dataExportBackup() {
   const a    = document.createElement('a');
   a.href     = url;
   a.download = `wealthwise-backup-${new Date().toISOString().slice(0,10)}.json`;
+  document.body.appendChild(a);
   a.click();
+  document.body.removeChild(a);
   URL.revokeObjectURL(url);
   showToast('Backup downloaded');
 }
@@ -4713,6 +4715,8 @@ function taxGrowthChange(val) {
 
 /* ── Main render ── */
 function taxRender() {
+  _taxEarnersLive = null;
+  _taxPropsLive   = null;
   const fy      = taxGetFY();
   const growth  = fy === '2025-26' ? taxGetGrowth() : 0;
   const earners = taxGetEarners();
@@ -4767,9 +4771,7 @@ function taxEarnerCardHtml(e, r, idx) {
       ? `<span style="font-size:10px;padding:2px 7px;border-radius:4px;background:rgba(74,222,128,.12);color:var(--accent)">✓ Received · ${dateStr}</span>`
       : `<span style="font-size:10px;padding:2px 7px;border-radius:4px;background:rgba(240,180,41,.1);color:var(--gold)">⏳ Expected · ${dateStr}</span>`;
   }
-  const superWarnHtml = r.superCapWarn
-    ? `<div style="margin-top:6px;font-size:10px;color:var(--warn)">⚠ Total concessional super $${Math.round(r.totalConcSuper).toLocaleString()} exceeds $30,000 cap</div>`
-    : '';
+  const superWarnHtml = `<div id="tax-superwarn-${idx}" style="margin-top:6px;font-size:10px;color:var(--warn)">${r.superCapWarn ? `⚠ Total concessional super $${Math.round(r.totalConcSuper).toLocaleString()} exceeds $30,000 cap` : ''}</div>`;
 
   return `
   <div class="card" style="padding:0;overflow:hidden">
@@ -4789,9 +4791,9 @@ function taxEarnerCardHtml(e, r, idx) {
           <div style="display:flex;align-items:center;gap:6px;margin-bottom:5px"><span style="color:var(--muted)">$</span><input type="number" value="${e.bonus||''}" placeholder="0" style="${taxInputStyle}" oninput="taxEarnerField(${idx},'bonus',parseFloat(this.value)||0)"></div>
           <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
             <input type="date" value="${e.bonusDate||''}" style="font-size:10px;padding:2px 6px;background:var(--s3);border:1px solid var(--border2);border-radius:4px;color:var(--text)" oninput="taxEarnerBonusDate(${idx},this.value)">
-            ${bonusBadge}
+            <span id="tax-bonus-badge-${idx}">${bonusBadge}</span>
           </div>
-          <div style="margin-top:5px;display:flex;align-items:center;gap:6px"><label style="font-size:10px;color:var(--muted)"><input type="checkbox" ${e.bonusInclude?'checked':''} onchange="taxEarnerField(${idx},'bonusInclude',this.checked)" style="margin-right:4px">Include in this FY</label></div>
+          <div style="margin-top:5px;display:flex;align-items:center;gap:6px"><label style="font-size:10px;color:var(--muted)"><input type="checkbox" id="tax-bonus-include-${idx}" ${e.bonusInclude?'checked':''} onchange="taxEarnerField(${idx},'bonusInclude',this.checked)" style="margin-right:4px">Include in this FY</label></div>
         </div>`)}
         ${taxFieldRow('Work Deductions', `<div style="display:flex;align-items:center;gap:6px"><span style="color:var(--muted)">$</span><input type="number" value="${e.workDeductions||''}" placeholder="0" style="${taxInputStyle}" oninput="taxEarnerField(${idx},'workDeductions',parseFloat(this.value)||0)"></div>`)}
         ${taxFieldRow('Dividends', `<div style="display:flex;align-items:center;gap:6px"><span style="color:var(--muted)">$</span><input type="number" value="${e.dividends||''}" placeholder="0" style="${taxInputStyle}" oninput="taxEarnerField(${idx},'dividends',parseFloat(this.value)||0)"><span style="color:var(--muted);font-size:10px">FC%</span><input type="number" value="${e.frankingCreditPct!=null?e.frankingCreditPct:30}" placeholder="30" style="${taxInputStyle};width:42px" oninput="taxEarnerField(${idx},'frankingCreditPct',parseFloat(this.value)||30)"></div>`)}
@@ -4807,11 +4809,11 @@ function taxEarnerCardHtml(e, r, idx) {
       ${superWarnHtml}
 
       <!-- Live summary -->
-      <div style="margin-top:12px;padding:10px;background:var(--dim);border-radius:8px">
+      <div id="tax-earner-sum-${idx}" style="margin-top:12px;padding:10px;background:var(--dim);border-radius:8px">
         <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;text-align:center">
-          <div><div class="ann">Taxable income</div><div style="font-family:'DM Mono',monospace;font-size:12px;font-weight:600;color:var(--text);margin-top:2px">${fmt(r.taxableIncome,0)}</div></div>
-          <div><div class="ann">Tax payable</div><div style="font-family:'DM Mono',monospace;font-size:12px;font-weight:600;color:var(--danger);margin-top:2px">${fmt(r.totalTax,0)}</div></div>
-          <div><div class="ann">Net monthly</div><div style="font-family:'DM Mono',monospace;font-size:12px;font-weight:600;color:var(--accent);margin-top:2px">${fmt(r.netMonthly,0)}</div></div>
+          <div><div class="ann">Taxable income</div><div id="tax-taxable-${idx}" style="font-family:'DM Mono',monospace;font-size:12px;font-weight:600;color:var(--text);margin-top:2px">${fmt(r.taxableIncome,0)}</div></div>
+          <div><div class="ann">Tax payable</div><div id="tax-payable-${idx}" style="font-family:'DM Mono',monospace;font-size:12px;font-weight:600;color:var(--danger);margin-top:2px">${fmt(r.totalTax,0)}</div></div>
+          <div><div class="ann">Net monthly</div><div id="tax-monthly-${idx}" style="font-family:'DM Mono',monospace;font-size:12px;font-weight:600;color:var(--accent);margin-top:2px">${fmt(r.netMonthly,0)}</div></div>
         </div>
       </div>
     </div>
@@ -4828,27 +4830,104 @@ function taxFieldRow(label, content) {
 }
 
 function taxEarnerField(idx, field, value) {
-  const earners = taxGetEarners();
-  if (!earners[idx]) return;
-  earners[idx][field] = value;
-  taxAutosave(earners, undefined);
-  taxRenderDebounced();
+  if (!_taxEarnersLive) _taxEarnersLive = taxGetEarners();
+  if (!_taxPropsLive)   _taxPropsLive   = taxGetProps();
+  if (!_taxEarnersLive[idx]) return;
+  _taxEarnersLive[idx][field] = value;
+  taxUpdateOutputsOnly(_taxEarnersLive, _taxPropsLive);
 }
 
 function taxEarnerBonusDate(idx, dateVal) {
-  const earners = taxGetEarners();
-  if (!earners[idx]) return;
-  earners[idx].bonusDate = dateVal;
+  if (!_taxEarnersLive) _taxEarnersLive = taxGetEarners();
+  if (!_taxPropsLive)   _taxPropsLive   = taxGetProps();
+  if (!_taxEarnersLive[idx]) return;
+  _taxEarnersLive[idx].bonusDate = dateVal;
   const d = dateVal ? new Date(dateVal) : null;
-  if (d) earners[idx].bonusInclude = d <= new Date();
-  taxAutosave(earners, undefined);
-  taxRenderDebounced();
+  if (d) _taxEarnersLive[idx].bonusInclude = d <= new Date();
+  /* Update bonus badge and checkbox without re-rendering the card */
+  const badgeEl = document.getElementById(`tax-bonus-badge-${idx}`);
+  const cbEl    = document.getElementById(`tax-bonus-include-${idx}`);
+  if (badgeEl) {
+    const now      = new Date();
+    const bonusDate = d;
+    let inner = `<span style="font-size:10px;color:var(--muted);font-style:italic">No date set</span>`;
+    if (bonusDate) {
+      const isPast  = bonusDate <= now;
+      const dateStr = bonusDate.toLocaleDateString('en-AU', { month: 'short', day: 'numeric', year: 'numeric' });
+      inner = isPast
+        ? `<span style="font-size:10px;padding:2px 7px;border-radius:4px;background:rgba(74,222,128,.12);color:var(--accent)">✓ Received · ${dateStr}</span>`
+        : `<span style="font-size:10px;padding:2px 7px;border-radius:4px;background:rgba(240,180,41,.1);color:var(--gold)">⏳ Expected · ${dateStr}</span>`;
+    }
+    badgeEl.innerHTML = inner;
+  }
+  if (cbEl) cbEl.checked = !!_taxEarnersLive[idx].bonusInclude;
+  taxUpdateOutputsOnly(_taxEarnersLive, _taxPropsLive);
 }
 
 let _taxRenderTimer = null;
+let _taxEarnersLive = null;
+let _taxPropsLive   = null;
 function taxRenderDebounced() {
   clearTimeout(_taxRenderTimer);
   _taxRenderTimer = setTimeout(taxRender, 300);
+}
+
+function taxUpdateOutputsOnly(earners, props) {
+  const fy      = taxGetFY();
+  const growth  = fy === '2025-26' ? taxGetGrowth() : 0;
+  const propResults = props.map(p => {
+    const r = taxCalcProperty(p);
+    return { ...r, id: p.id, name: p.name, ownership: p.ownership || [] };
+  });
+  const earnerResults = earners.map(e => TAX.calc(e, propResults, growth));
+
+  earners.forEach((e, idx) => {
+    const r = earnerResults[idx];
+    const taxableEl = document.getElementById(`tax-taxable-${idx}`);
+    const payableEl = document.getElementById(`tax-payable-${idx}`);
+    const monthlyEl = document.getElementById(`tax-monthly-${idx}`);
+    const warnEl    = document.getElementById(`tax-superwarn-${idx}`);
+    if (taxableEl) taxableEl.textContent = fmt(r.taxableIncome, 0);
+    if (payableEl) payableEl.textContent = fmt(r.totalTax, 0);
+    if (monthlyEl) monthlyEl.textContent = fmt(r.netMonthly, 0);
+    if (warnEl)    warnEl.textContent    = r.superCapWarn
+      ? `⚠ Total concessional super $${Math.round(r.totalConcSuper).toLocaleString()} exceeds $30,000 cap`
+      : '';
+  });
+
+  props.forEach((p, idx) => {
+    const r = propResults[idx];
+    const gearedCol = r.geared === 'positive' ? 'var(--accent)' : 'var(--gold)';
+    const gearedLbl = r.geared === 'positive' ? '● Positively geared' : '● Negatively geared';
+    const netrentEl  = document.getElementById(`tax-prop-netrent-${idx}`);
+    const expEl      = document.getElementById(`tax-prop-expenses-${idx}`);
+    const netrent2El = document.getElementById(`tax-prop-netrent2-${idx}`);
+    const exp2El     = document.getElementById(`tax-prop-expenses2-${idx}`);
+    const netresEl   = document.getElementById(`tax-prop-netresult-${idx}`);
+    const gearedEl   = document.getElementById(`tax-prop-gearedlbl-${idx}`);
+    if (netrentEl)  netrentEl.textContent  = fmt(r.netRent, 0);
+    if (expEl)      expEl.textContent      = `(${fmt(r.expenses, 0)})`;
+    if (netrent2El) netrent2El.textContent = fmt(r.netRent, 0);
+    if (exp2El)     exp2El.textContent     = `(${fmt(r.expenses, 0)})`;
+    if (netresEl) {
+      netresEl.textContent = `${r.netResult >= 0 ? '' : '-'}${fmt(Math.abs(r.netResult), 0)}`;
+      netresEl.style.color = gearedCol;
+    }
+    if (gearedEl) { gearedEl.textContent = gearedLbl; gearedEl.style.color = gearedCol; }
+    earners.forEach((e, ei) => {
+      const shareEl = document.getElementById(`tax-prop-ownshare-${idx}-${ei}`);
+      if (shareEl) {
+        const own   = (p.ownership||[]).find(o => o.id === e.id) || {};
+        const share = r.netResult * ((own.pct||0)/100);
+        shareEl.textContent = `${share >= 0 ? '+' : ''}${fmt(share, 0)}`;
+        shareEl.style.color = share >= 0 ? 'var(--accent)' : 'var(--gold)';
+      }
+    });
+  });
+
+  taxRenderTable(earners, earnerResults, props, propResults);
+  taxRenderBrackets(earners, earnerResults);
+  taxRunScenario(earners, earnerResults, growth);
 }
 
 function taxAddEarner() {
@@ -4910,7 +4989,7 @@ function taxPropCardHtml(p, r, idx, earners) {
         ${taxFieldRow('Linked Loan', loanSel)}
         ${taxFieldRow('Gross Rental /yr', `<div><div style="display:flex;align-items:center;gap:6px;margin-bottom:4px"><span style="color:var(--muted)">$</span><input type="number" value="${p.grossRentalIncome||''}" placeholder="0" style="${taxInputStyle}" oninput="taxPropField(${idx},'grossRentalIncome',parseFloat(this.value)||0)"></div><div class="ann">Manual entry · override transactions</div></div>`)}
         ${taxFieldRow('Vacancy Weeks', `<input type="number" min="0" max="52" value="${p.vacancyWeeks||0}" style="${taxInputStyle};width:60px" oninput="taxPropField(${idx},'vacancyWeeks',parseFloat(this.value)||0)">`)}
-        <div style="font-size:11px;color:var(--muted)">Net rental income: <span style="color:var(--text);font-family:'DM Mono',monospace">${fmt(r.netRent,0)}</span></div>
+        <div style="font-size:11px;color:var(--muted)">Net rental income: <span id="tax-prop-netrent-${idx}" style="color:var(--text);font-family:'DM Mono',monospace">${fmt(r.netRent,0)}</span></div>
       </div>
 
       <div class="lbl" style="margin-bottom:8px">Deductible Expenses</div>
@@ -4922,17 +5001,17 @@ function taxPropCardHtml(p, r, idx, earners) {
         ${taxFieldRow('Repairs & maint.', `<div style="display:flex;align-items:center;gap:6px"><span style="color:var(--muted)">$</span><input type="number" value="${p.repairsMaintenance||''}" placeholder="0" style="${taxInputStyle}" oninput="taxPropField(${idx},'repairsMaintenance',parseFloat(this.value)||0)"></div>`)}
         ${taxFieldRow('Water rates /yr', `<div style="display:flex;align-items:center;gap:6px"><span style="color:var(--muted)">$</span><input type="number" value="${p.waterRates||''}" placeholder="0" style="${taxInputStyle}" oninput="taxPropField(${idx},'waterRates',parseFloat(this.value)||0)"></div>`)}
         ${taxFieldRow('Advertising /yr', `<div style="display:flex;align-items:center;gap:6px"><span style="color:var(--muted)">$</span><input type="number" value="${p.advertisingFees||''}" placeholder="0" style="${taxInputStyle}" oninput="taxPropField(${idx},'advertisingFees',parseFloat(this.value)||0)"></div>`)}
-        <div style="font-size:11px;color:var(--muted)">Total expenses: <span style="font-family:'DM Mono',monospace;color:var(--danger)">(${fmt(r.expenses,0)})</span></div>
+        <div style="font-size:11px;color:var(--muted)">Total expenses: <span id="tax-prop-expenses-${idx}" style="font-family:'DM Mono',monospace;color:var(--danger)">(${fmt(r.expenses,0)})</span></div>
       </div>
 
       <!-- Net position -->
-      <div style="padding:10px;background:var(--dim);border-radius:8px;margin-bottom:12px">
+      <div id="tax-prop-netpos-${idx}" style="padding:10px;background:var(--dim);border-radius:8px;margin-bottom:12px">
         <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;text-align:center;margin-bottom:6px">
-          <div><div class="ann">Gross rental</div><div style="font-family:'DM Mono',monospace;font-size:12px;color:var(--accent);margin-top:2px">${fmt(r.netRent,0)}</div></div>
-          <div><div class="ann">Total expenses</div><div style="font-family:'DM Mono',monospace;font-size:12px;color:var(--danger);margin-top:2px">(${fmt(r.expenses,0)})</div></div>
-          <div><div class="ann">Net result</div><div style="font-family:'DM Mono',monospace;font-size:13px;font-weight:700;color:${gearedCol};margin-top:2px">${r.netResult>=0?'':'-'}${fmt(Math.abs(r.netResult),0)}</div></div>
+          <div><div class="ann">Gross rental</div><div id="tax-prop-netrent2-${idx}" style="font-family:'DM Mono',monospace;font-size:12px;color:var(--accent);margin-top:2px">${fmt(r.netRent,0)}</div></div>
+          <div><div class="ann">Total expenses</div><div id="tax-prop-expenses2-${idx}" style="font-family:'DM Mono',monospace;font-size:12px;color:var(--danger);margin-top:2px">(${fmt(r.expenses,0)})</div></div>
+          <div><div class="ann">Net result</div><div id="tax-prop-netresult-${idx}" style="font-family:'DM Mono',monospace;font-size:13px;font-weight:700;color:${gearedCol};margin-top:2px">${r.netResult>=0?'':'-'}${fmt(Math.abs(r.netResult),0)}</div></div>
         </div>
-        <div style="text-align:center;font-size:10px;font-weight:600;color:${gearedCol}">${gearedLbl}</div>
+        <div id="tax-prop-gearedlbl-${idx}" style="text-align:center;font-size:10px;font-weight:600;color:${gearedCol}">${gearedLbl}</div>
       </div>
 
       <!-- Ownership split -->
@@ -4945,7 +5024,7 @@ function taxPropCardHtml(p, r, idx, earners) {
           return taxFieldRow(e.name||`Earner ${ei+1}`, `<div style="display:flex;align-items:center;gap:6px">
             <input type="number" min="0" max="100" step="5" value="${own.pct||''}" placeholder="0" style="${taxInputStyle};width:60px" oninput="taxPropOwnership(${idx},'${e.id}',parseFloat(this.value)||0)">
             <span style="color:var(--muted);font-size:10px">%</span>
-            <span style="font-size:10px;font-family:'DM Mono',monospace;color:${share>=0?'var(--accent)':'var(--gold)'}">${share>=0?'+':''}${fmt(share,0)}</span>
+            <span id="tax-prop-ownshare-${idx}-${ei}" style="font-size:10px;font-family:'DM Mono',monospace;color:${share>=0?'var(--accent)':'var(--gold)'}">${share>=0?'+':''}${fmt(share,0)}</span>
           </div>`);
         }).join('')}
         ${ownWarn ? `<div style="font-size:10px;color:var(--warn)">⚠ Ownership totals ${totalOwn.toFixed(0)}% — must equal 100%</div>` : ''}
@@ -4955,23 +5034,23 @@ function taxPropCardHtml(p, r, idx, earners) {
 }
 
 function taxPropField(idx, field, value) {
-  const props = taxGetProps();
-  if (!props[idx]) return;
-  props[idx][field] = value;
-  taxAutosave(undefined, props);
-  taxRenderDebounced();
+  if (!_taxEarnersLive) _taxEarnersLive = taxGetEarners();
+  if (!_taxPropsLive)   _taxPropsLive   = taxGetProps();
+  if (!_taxPropsLive[idx]) return;
+  _taxPropsLive[idx][field] = value;
+  taxUpdateOutputsOnly(_taxEarnersLive, _taxPropsLive);
 }
 
 function taxPropOwnership(propIdx, earnerId, pct) {
-  const props = taxGetProps();
-  if (!props[propIdx]) return;
-  let own = props[propIdx].ownership || [];
+  if (!_taxEarnersLive) _taxEarnersLive = taxGetEarners();
+  if (!_taxPropsLive)   _taxPropsLive   = taxGetProps();
+  if (!_taxPropsLive[propIdx]) return;
+  let own = _taxPropsLive[propIdx].ownership || [];
   const existing = own.find(o => o.id === earnerId);
   if (existing) existing.pct = pct;
   else own.push({ id: earnerId, pct });
-  props[propIdx].ownership = own;
-  taxAutosave(undefined, props);
-  taxRenderDebounced();
+  _taxPropsLive[propIdx].ownership = own;
+  taxUpdateOutputsOnly(_taxEarnersLive, _taxPropsLive);
 }
 
 function taxAddProperty() {
@@ -6973,6 +7052,14 @@ function importDiscard() {
 WW.init();
 updateStatusBar();
 weeklyRender();
+
+/* Save tax live state to localStorage when a field loses focus */
+document.getElementById('tax-earner-cards').addEventListener('focusout', () => {
+  if (_taxEarnersLive) taxSaveEarners(_taxEarnersLive);
+});
+document.getElementById('tax-prop-cards').addEventListener('focusout', () => {
+  if (_taxPropsLive) taxSaveProps(_taxPropsLive);
+});
 </script>
 </body>
 </html>

@@ -475,6 +475,9 @@ input[type=number]::-webkit-inner-spin-button{-webkit-appearance:none}
 
     <!-- 1. Weekly Review -->
     <div class="panel active" id="panel-weekly">
+      <!-- Action Required outstanding items panel -->
+      <div id="wr-outstanding" style="margin-bottom:18px"></div>
+
       <!-- Header -->
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:18px">
         <div>
@@ -2186,6 +2189,7 @@ function dataExportBackup() {
   a.click();
   document.body.removeChild(a);
   URL.revokeObjectURL(url);
+  localStorage.setItem('ww_last_backup', Date.now().toString());
   showToast('Backup downloaded');
 }
 
@@ -3021,6 +3025,8 @@ function acctCSVConfirm() {
 
 /* ── Tab activation ── */
 document.addEventListener('ww:tab', e => {
+  /* Recheck outstanding items on every tab switch so resolved items disappear */
+  outstandingRender();
   if (e.detail === 'weekly')   weeklyRender();
   if (e.detail === 'accounts') acctRender();
   if (e.detail === 'props')    propsRender();
@@ -5299,6 +5305,212 @@ function taxScenarioReset() {
    WEEKLY REVIEW TAB
 ═══════════════════════════════════════════════════ */
 
+/* ═══════════════════════════════════════════════════
+   ACTION REQUIRED — OUTSTANDING ITEMS PANEL
+═══════════════════════════════════════════════════ */
+function outstandingCollect() {
+  const items    = [];
+  const accounts = WW.getAccounts();
+  const txns     = WW.getTransactions();
+  const props    = WW.getProperties();
+  const goals    = WW.getGoals();
+  const earners  = taxGetEarners();
+  const now      = new Date();
+
+  const acctHasTxns = {};
+  txns.forEach(t => { if (t.accountId) acctHasTxns[t.accountId] = true; });
+
+  /* 1 – Accounts with no transactions */
+  const importable = ['transaction', 'savings', 'offset', 'credit'];
+  accounts.filter(a => importable.includes(a.type) && !acctHasTxns[a.id]).forEach(a => {
+    items.push({ icon: '🏦', sev: 'low', text: `"${a.name}" has no transactions imported`,
+      tab: 'accounts', actionLabel: 'Go to Accounts' });
+  });
+
+  /* 2 – Loans with missing rate or balance */
+  accounts.filter(a => a.type === 'loan').forEach(a => {
+    if (!a.rate)
+      items.push({ icon: '🏠', sev: 'high', text: `Loan "${a.name}" is missing an interest rate`,
+        tab: 'loans', actionLabel: 'Go to Loans' });
+    if (!loanBalance(a))
+      items.push({ icon: '🏠', sev: 'high', text: `Loan "${a.name}" has no balance set`,
+        tab: 'loans', actionLabel: 'Go to Loans' });
+  });
+
+  /* 3 – Properties with no address or estimated value */
+  props.forEach(p => {
+    const label = p.name || 'Unnamed property';
+    if (!p.address || !p.address.trim())
+      items.push({ icon: '🏘', sev: 'low', text: `Property "${label}" has no address`,
+        tab: 'props', actionLabel: 'Edit Property' });
+    if (!propCurrentValue(p))
+      items.push({ icon: '🏘', sev: 'low', text: `Property "${label}" has no estimated value`,
+        tab: 'props', actionLabel: 'Edit Property' });
+  });
+
+  /* 4 – Tax earners with salary at 0 */
+  earners.forEach(e => {
+    if (!e.salary)
+      items.push({ icon: '🧾', sev: 'high', text: `Earner "${e.name || 'Unnamed'}" has no salary entered`,
+        tab: 'tax', scrollTo: 'tax-earner-cards', actionLabel: 'Go to Tax' });
+  });
+
+  /* 5 – Goals with no target amount or no monthly contribution */
+  goals.forEach(g => {
+    const label = g.name || 'Unnamed goal';
+    if (!g.target)
+      items.push({ icon: '🎯', sev: 'low', text: `Goal "${label}" has no target amount`,
+        tab: 'goals', actionLabel: 'Edit Goal' });
+    else if (!g.monthly)
+      items.push({ icon: '🎯', sev: 'low', text: `Goal "${label}" has no monthly contribution set`,
+        tab: 'goals', actionLabel: 'Edit Goal' });
+  });
+
+  /* 6 – No CSV imported in last 30 days */
+  const importableAccts = accounts.filter(a => importable.includes(a.type));
+  if (txns.length === 0) {
+    if (importableAccts.length > 0)
+      items.push({ icon: '📥', sev: 'medium', text: 'No transactions have been imported yet',
+        tab: 'accounts', actionLabel: 'Import CSV' });
+  } else {
+    const latestDate = txns.reduce((mx, t) => (t.date > mx ? t.date : mx), '');
+    const daysSince  = latestDate ? Math.floor((Date.now() - new Date(latestDate)) / 86400000) : Infinity;
+    if (daysSince > 30)
+      items.push({ icon: '📥', sev: 'medium',
+        text: `No transactions imported in ${daysSince} days — data may be stale`,
+        tab: 'accounts', actionLabel: 'Import CSV' });
+  }
+
+  /* 7 – No backup exported in last 7 days */
+  const lastBackupTs = localStorage.getItem('ww_last_backup');
+  const backupDays   = lastBackupTs
+    ? Math.floor((Date.now() - parseInt(lastBackupTs, 10)) / 86400000)
+    : Infinity;
+  if (backupDays > 7)
+    items.push({ icon: '💾', sev: 'medium',
+      text: backupDays === Infinity
+        ? 'No backup has ever been exported'
+        : `Last backup exported ${backupDays} day${backupDays !== 1 ? 's' : ''} ago`,
+      tab: 'settings', actionLabel: 'Export Backup' });
+
+  /* 8 – Negative account balance (asset accounts only) */
+  const assetTypes = ['transaction', 'savings', 'offset'];
+  accounts.filter(a => assetTypes.includes(a.type)).forEach(a => {
+    const bal = a.closing != null ? a.closing : (a.opening || 0);
+    if (bal < 0)
+      items.push({ icon: '🔴', sev: 'high', text: `"${a.name}" balance is negative (${fmt(bal, 2)})`,
+        tab: 'accounts', actionLabel: 'View Account' });
+  });
+
+  /* 9 – Loan remaining term under 12 months */
+  accounts.filter(a => a.type === 'loan').forEach(a => {
+    const termMo = loanTermMonths(a);
+    if (termMo > 0 && termMo < 12)
+      items.push({ icon: '⏰', sev: 'medium',
+        text: `Loan "${a.name}" term ends in ${termMo} month${termMo !== 1 ? 's' : ''}`,
+        tab: 'loans', actionLabel: 'View Loans' });
+  });
+
+  /* 10 – Goal target date already passed */
+  goals.forEach(g => {
+    if (g.date && g.target && (g.current || 0) < g.target && new Date(g.date) < now) {
+      const mthsOver = Math.floor((now - new Date(g.date)) / (86400000 * 30));
+      items.push({ icon: '🎯', sev: 'low',
+        text: `Goal "${g.name || 'Unnamed'}" target date passed${mthsOver > 0 ? ' ' + mthsOver + 'mo ago' : ' recently'}`,
+        tab: 'goals', actionLabel: 'View Goals' });
+    }
+  });
+
+  /* Sort high → medium → low */
+  const ord = { high: 0, medium: 1, low: 2 };
+  items.sort((a, b) => ord[a.sev] - ord[b.sev]);
+  return items;
+}
+
+function outstandingRender() {
+  const el = document.getElementById('wr-outstanding');
+  if (!el) return;
+
+  const items = outstandingCollect();
+  const collapsed = localStorage.getItem('ww_outstanding_collapsed') === 'true';
+  const count = items.length;
+
+  if (count === 0) {
+    el.innerHTML = `
+      <div style="display:flex;align-items:center;gap:10px;padding:10px 16px;background:rgba(74,222,128,.08);border:1px solid rgba(74,222,128,.25);border-radius:10px">
+        <span style="font-size:15px">✅</span>
+        <span style="font-size:13px;font-weight:700;color:var(--accent)">All clear</span>
+        <span style="font-size:12px;color:var(--muted)">— no outstanding items</span>
+      </div>`;
+    return;
+  }
+
+  const highCt = items.filter(i => i.sev === 'high').length;
+  const medCt  = items.filter(i => i.sev === 'medium').length;
+  const sevCol    = highCt ? 'var(--danger)' : medCt ? 'var(--warn)' : 'var(--blue)';
+  const sevBg     = highCt ? 'rgba(224,96,96,.06)'    : medCt ? 'rgba(240,180,41,.06)'    : 'rgba(91,155,213,.06)';
+  const sevBorder = highCt ? 'rgba(224,96,96,.3)'     : medCt ? 'rgba(240,180,41,.3)'     : 'rgba(91,155,213,.3)';
+
+  const badge = `<span style="display:inline-flex;align-items:center;justify-content:center;min-width:20px;height:20px;padding:0 6px;background:${sevCol};color:#fff;border-radius:10px;font-size:11px;font-weight:700">${count}</span>`;
+  const subline = collapsed
+    ? `<span style="font-size:11px;color:var(--muted)">${[highCt && highCt+' high', medCt && medCt+' medium', (count-highCt-medCt) && (count-highCt-medCt)+' low'].filter(Boolean).join(' · ')}</span>`
+    : '';
+
+  const SEV = {
+    high:   { col: 'var(--danger)', bg: 'rgba(224,96,96,.05)',    border: 'rgba(224,96,96,.15)',    label: 'High'   },
+    medium: { col: 'var(--warn)',   bg: 'rgba(240,180,41,.05)',   border: 'rgba(240,180,41,.15)',   label: 'Medium' },
+    low:    { col: 'var(--blue)',   bg: 'rgba(91,155,213,.05)',   border: 'rgba(91,155,213,.15)',   label: 'Low'    },
+  };
+
+  const rows = items.map((item, idx) => {
+    const s   = SEV[item.sev];
+    const nav = item.tab ? `outstandingNav('${item.tab}','${item.scrollTo||''}')` : '';
+    const btn = nav
+      ? `<button onclick="${nav}" style="flex-shrink:0;padding:2px 9px;font-size:10px;font-weight:600;border:1px solid ${s.col};border-radius:4px;background:transparent;color:${s.col};cursor:pointer">${item.actionLabel}</button>`
+      : '';
+    const isLast = idx === items.length - 1;
+    return `
+      <div style="display:flex;align-items:center;gap:10px;padding:9px 14px;${isLast?'':'border-bottom:1px solid var(--border);'}background:${s.bg}">
+        <span style="font-size:14px;flex-shrink:0">${item.icon}</span>
+        <span style="flex:1;font-size:12px;color:var(--text);min-width:0">${item.text}</span>
+        ${btn}
+        <span style="flex-shrink:0;padding:1px 6px;font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;border-radius:3px;color:${s.col};background:${s.col}20">${s.label}</span>
+      </div>`;
+  }).join('');
+
+  el.innerHTML = `
+    <div style="border:1px solid ${sevBorder};border-radius:10px;overflow:hidden;background:${sevBg}">
+      <div onclick="outstandingToggle()" style="display:flex;align-items:center;gap:10px;padding:10px 14px;cursor:pointer;user-select:none;border-bottom:${collapsed?'none':'1px solid '+sevBorder}">
+        <span style="font-size:15px">⚠️</span>
+        <span style="font-size:13px;font-weight:700;color:var(--text)">Action Required</span>
+        ${badge}
+        ${subline}
+        <span style="margin-left:auto;font-size:11px;color:var(--muted);font-family:'DM Mono',monospace">${collapsed ? '▼ show' : '▲ hide'}</span>
+      </div>
+      ${collapsed ? '' : `<div>${rows}</div>`}
+    </div>`;
+}
+
+function outstandingToggle() {
+  const isCollapsed = localStorage.getItem('ww_outstanding_collapsed') === 'true';
+  localStorage.setItem('ww_outstanding_collapsed', (!isCollapsed).toString());
+  outstandingRender();
+}
+
+function outstandingNav(tab, scrollTo) {
+  if (tab === 'settings') {
+    openModal('settings-modal');
+    return;
+  }
+  switchTab(tab);
+  if (scrollTo) {
+    setTimeout(() => {
+      const target = document.getElementById(scrollTo);
+      if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }, 120);
+  }
+}
+
 function weeklyRender() {
   const now = new Date();
   const lbl = document.getElementById('wr-date-label');
@@ -5306,6 +5518,7 @@ function weeklyRender() {
     lbl.textContent = now.toLocaleDateString('en-AU', { weekday:'long', day:'numeric', month:'long', year:'numeric' })
       + ' · ' + WW.fyLabel() + ' Week ' + WW.fyWeek();
   }
+  outstandingRender();
   weeklyKpiStrip();
   weeklyRenderAlerts();
   weeklyRenderGoalPace();
